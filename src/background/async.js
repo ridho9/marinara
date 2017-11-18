@@ -1,3 +1,10 @@
+class ChromeError extends Error
+{
+  constructor(...params) {
+    super(...params);
+  }
+}
+
 class AsyncChrome
 {
   static get tabs() {
@@ -21,32 +28,72 @@ class AsyncChrome
   }
 }
 
+function promise(fn) {
+  return new Promise((resolve, reject) => {
+    const callback = (...results) => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(new ChromeError(err.message));
+      } else {
+        resolve(...results);
+      }
+    };
+
+    fn(callback);
+  });
+}
+
 class AsyncTabs
 {
   static async create(options) {
-    return new Promise((resolve, reject) => {
-      chrome.tabs.create(options, tab => resolve(tab));
+    try {
+      return await this.tryCreate(options);
+    } catch (e) {
+      if (e instanceof ChromeError) {
+        // We cannot create a tab if no windows are open. In this case, we must
+        // create a window with the desired URL instead.
+        const windowOptions = {
+          url: options.url,
+          focused: !!options.active
+        };
+        let win = await AsyncChrome.windows.create(windowOptions);
+        return win.tabs[0];
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  static async tryCreate(options) {
+    return promise(callback => {
+      chrome.tabs.create(options, callback);
     });
   }
 
   static async getCurrent() {
-    return new Promise((resolve, reject) => {
-      chrome.tabs.getCurrent(tab => resolve(tab));
+    return promise(callback => {
+      chrome.tabs.getCurrent(callback);
     });
   }
 
   static async update(tabId, updateProperties) {
-    return new Promise((resolve, reject) => {
-      chrome.tabs.update(tabId, updateProperties, tab => resolve(tab));
+    return promise(callback => {
+      chrome.tabs.update(tabId, updateProperties, callback);
     });
   }
 }
 
 class AsyncWindows
 {
+  static async create(createData) {
+    return promise(callback => {
+      chrome.windows.create(createData, callback);
+    });
+  }
+
   static async update(windowId, updateInfo) {
-    return new Promise((resolve, reject) => {
-      chrome.windows.update(windowId, updateInfo, win => resolve(win));
+    return promise(callback => {
+      chrome.windows.update(windowId, updateInfo, callback);
     });
   }
 }
@@ -54,19 +101,19 @@ class AsyncWindows
 class AsyncNotifications
 {
   static async create(options) {
-    return new Promise((resolve, reject) => {
+    return promise(callback => {
       try {
-        chrome.notifications.create('', options, id => resolve(id));        
+        chrome.notifications.create('', options, callback);        
       } catch (e) {
         // This is failing on Firefox as it doesn't support the buttons option for the notification and raises an exception when this is called. (see http://bugzil.la/1190681)
         // Try again with a subset of options that are more broadly supported
-        const compatible_options = {
+        const compatibleOptions = {
           type: options.type,
           iconUrl: options.iconUrl,
           title: options.title,
           message: options.message
         };
-        chrome.notifications.create('', compatible_options, id => resolve(id));
+        chrome.notifications.create('', compatibleOptions, callback);
       }
     });
   }
@@ -79,20 +126,20 @@ class AsyncStorage
   }
 
   get(keys = null) {
-    return new Promise((resolve, reject) => {
-      this.store.get(keys, result => resolve(result));
+    return promise(callback => {
+      this.store.get(keys, callback);
     });
   }
 
   set(obj) {
-    return new Promise((resolve, reject) => {
-      this.store.set(obj, () => resolve());
+    return promise(callback => {
+      this.store.set(obj, callback);
     });
   }
 
   clear() {
-    return new Promise((resolve, reject) => {
-      this.store.clear(() => resolve());
+    return promise(callback => {
+      this.store.clear(callback);
     });
   }
 
